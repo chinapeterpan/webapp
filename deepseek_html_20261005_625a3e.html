@@ -1,0 +1,280 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>麦克风权限与录音测试</title>
+<style>
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    padding: 16px;
+    line-height: 1.6;
+  }
+  button {
+    font-size: 16px;
+    padding: 10px 14px;
+    margin: 6px 4px 6px 0;
+    border-radius: 8px;
+    border: 1px solid #ccc;
+    background: #f8f8f8;
+  }
+  button:disabled { opacity: .5; }
+  #status {
+    padding: 12px;
+    border-radius: 8px;
+    background: #f0f0f0;
+    margin: 12px 0;
+    white-space: pre-wrap;
+  }
+  #log {
+    background: #111;
+    color: #0f0;
+    padding: 10px;
+    border-radius: 8px;
+    overflow: auto;
+    max-height: 260px;
+    font-size: 12px;
+  }
+  audio { width: 100%; margin-top: 10px; }
+</style>
+</head>
+<body>
+
+<h1>麦克风权限测试</h1>
+<p>请用 HTTPS 或 localhost 打开。OPPO Edge 需要允许麦克风权限。</p>
+
+<div id="support"></div>
+<div id="status">状态：未开始</div>
+
+<button id="permBtn">1. 请求麦克风权限</button>
+<button id="recBtn" disabled>2. 开始录音</button>
+<button id="stopBtn" disabled>3. 停止录音</button>
+<button id="playBtn" disabled>4. 播放</button>
+<button id="uploadBtn" disabled>5. 上传到后端识别</button>
+
+<audio id="player" controls></audio>
+<pre id="log"></pre>
+
+<script>
+const statusEl = document.getElementById('status');
+const supportEl = document.getElementById('support');
+const logEl = document.getElementById('log');
+const permBtn = document.getElementById('permBtn');
+const recBtn = document.getElementById('recBtn');
+const stopBtn = document.getElementById('stopBtn');
+const playBtn = document.getElementById('playBtn');
+const uploadBtn = document.getElementById('uploadBtn');
+const player = document.getElementById('player');
+
+let stream = null;
+let recorder = null;
+let chunks = [];
+let blob = null;
+let timer = null;
+let recordStart = 0;
+
+function log(...args) {
+  console.log(...args);
+  logEl.textContent += args.map(a =>
+    typeof a === 'object' ? JSON.stringify(a) : String(a)
+  ).join(' ') + '\n';
+  logEl.scrollTop = logEl.scrollHeight;
+}
+
+function setStatus(text) {
+  statusEl.textContent = '状态：' + text;
+}
+
+const hasGUM = !!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia);
+const hasMR = typeof MediaRecorder !== 'undefined';
+
+supportEl.innerHTML = `
+  <p>
+    getUserMedia：<b>${hasGUM ? '支持' : '不支持'}</b>；
+    MediaRecorder：<b>${hasMR ? '支持' : '不支持'}</b>；
+    安全上下文：<b>${window.isSecureContext ? '是' : '否'}</b>；
+    当前地址：<b>${location.origin}</b>
+  </p>
+`;
+
+if (!hasGUM) {
+  permBtn.disabled = true;
+  setStatus('浏览器不支持 getUserMedia，无法获取麦克风。');
+}
+
+permBtn.onclick = async () => {
+  try {
+    setStatus('正在请求麦克风权限……');
+    log('请求 getUserMedia...');
+
+    stream = await navigator.mediaDevices.getUserMedia({
+      audio: {
+        echoCancellation: true,
+        noiseSuppression: true,
+        autoGainControl: true,
+        channelCount: 1
+      },
+      video: false
+    });
+
+    const tracks = stream.getAudioTracks();
+    log('成功获取音频流，轨道数：', tracks.length);
+
+    tracks.forEach((t, i) => {
+      const s = t.getSettings ? t.getSettings() : {};
+      log(`轨道${i}: label=${t.label}, enabled=${t.enabled}, muted=${t.muted}`);
+      log('settings=', s);
+    });
+
+    setStatus('麦克风权限已获得，可以开始录音。');
+    recBtn.disabled = false;
+    permBtn.disabled = true;
+
+  } catch (err) {
+    console.error(err);
+    log('getUserMedia 失败：', err.name, err.message);
+    setStatus(`获取麦克风失败：${err.name} - ${err.message}`);
+
+    if (err.name === 'NotAllowedError') {
+      setStatus('权限被拒绝。请在浏览器或系统设置里允许 Edge 使用麦克风，然后刷新重试。');
+    } else if (err.name === 'NotFoundError') {
+      setStatus('没有找到麦克风设备。');
+    } else if (err.name === 'NotReadableError') {
+      setStatus('麦克风被其他应用占用，或系统拒绝访问。');
+    } else if (err.name === 'SecurityError') {
+      setStatus('安全错误：必须使用 HTTPS 或 localhost。');
+    }
+  }
+};
+
+recBtn.onclick = () => {
+  if (!stream) return;
+
+  if (!hasMR) {
+    setStatus('MediaRecorder 不支持，无法录音。');
+    return;
+  }
+
+  const types = [
+    'audio/webm;codecs=opus',
+    'audio/webm',
+    'audio/mp4',
+    'audio/ogg;codecs=opus'
+  ];
+
+  const mimeType = types.find(t => MediaRecorder.isTypeSupported(t)) || '';
+  log('选择 mimeType：', mimeType || '浏览器默认');
+
+  chunks = [];
+  blob = null;
+  player.removeAttribute('src');
+  player.load();
+  playBtn.disabled = true;
+  uploadBtn.disabled = true;
+
+  try {
+    recorder = new MediaRecorder(stream, mimeType ? { mimeType } : undefined);
+  } catch (e) {
+    log('创建 MediaRecorder 失败：', e);
+    setStatus('创建录音器失败：' + e.message);
+    return;
+  }
+
+  recorder.ondataavailable = (e) => {
+    if (e.data && e.data.size > 0) {
+      chunks.push(e.data);
+      log('收到数据块：', e.data.size, 'bytes');
+    }
+  };
+
+  recorder.onstop = () => {
+    clearInterval(timer);
+
+    blob = new Blob(chunks, {
+      type: recorder.mimeType || 'audio/webm'
+    });
+
+    const url = URL.createObjectURL(blob);
+    player.src = url;
+
+    playBtn.disabled = false;
+    uploadBtn.disabled = false;
+
+    setStatus(`录音结束，大小 ${Math.round(blob.size / 1024)} KB，类型 ${blob.type}`);
+    log('录音结束，blob=', blob);
+  };
+
+  recorder.onerror = (e) => {
+    log('录音错误：', e.error || e);
+    setStatus('录音出错：' + (e.error?.name || '未知'));
+  };
+
+  recorder.start(1000);
+  recordStart = Date.now();
+
+  timer = setInterval(() => {
+    const sec = ((Date.now() - recordStart) / 1000).toFixed(1);
+    setStatus(`正在录音…… ${sec}s`);
+  }, 100);
+
+  recBtn.disabled = true;
+  stopBtn.disabled = false;
+  setStatus('正在录音……');
+};
+
+stopBtn.onclick = () => {
+  if (recorder && recorder.state !== 'inactive') {
+    recorder.stop();
+  }
+  stopBtn.disabled = true;
+  recBtn.disabled = false;
+};
+
+playBtn.onclick = () => {
+  if (blob) {
+    player.play().catch(e => log('播放失败：', e.message));
+  }
+};
+
+uploadBtn.onclick = async () => {
+  if (!blob) return;
+
+  uploadBtn.disabled = true;
+  setStatus('正在上传到后端识别……');
+
+  try {
+    const form = new FormData();
+
+    const ext = blob.type.includes('mp4')
+      ? 'm4a'
+      : blob.type.includes('ogg')
+        ? 'ogg'
+        : 'webm';
+
+    form.append('audio', blob, `record.${ext}`);
+
+    const resp = await fetch('/api/asr', {
+      method: 'POST',
+      body: form
+    });
+
+    const data = await resp.json().catch(() => ({}));
+    log('后端返回：', data);
+
+    if (!resp.ok) {
+      setStatus(`后端识别失败：HTTP ${resp.status} ${JSON.stringify(data)}`);
+    } else {
+      setStatus(`识别结果：${data.text || JSON.stringify(data)}`);
+    }
+
+  } catch (err) {
+    log('上传失败：', err);
+    setStatus('上传失败：' + err.message + '（如果后端还没写好，这一步失败正常）');
+  } finally {
+    uploadBtn.disabled = false;
+  }
+};
+</script>
+
+</body>
+</html>

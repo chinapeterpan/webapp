@@ -1,0 +1,730 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>智能语音报数打卡 - 1到10欢呼神器</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    @keyframes pulse-ring {
+      0% { transform: scale(0.95); opacity: 0.8; }
+      50% { transform: scale(1.15); opacity: 0.3; }
+      100% { transform: scale(0.95); opacity: 0.8; }
+    }
+    .pulse-ring {
+      animation: pulse-ring 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+    }
+    @keyframes bounce-pop {
+      0% { transform: scale(0.6); opacity: 0; }
+      70% { transform: scale(1.15); }
+      100% { transform: scale(1); opacity: 1; }
+    }
+    .bounce-pop {
+      animation: bounce-pop 0.5s cubic-bezier(0.175, 0.885, 0.32, 1.275) forwards;
+    }
+    /* 自定义声波动画条 */
+    .wave-bar {
+      transition: height 0.15s ease;
+    }
+  </style>
+</head>
+<body class="bg-slate-900 text-slate-100 min-h-screen flex flex-col justify-between font-sans select-none antialiased">
+
+  <!-- 粒子画布用于欢呼撒花 -->
+  <canvas id="confettiCanvas" class="fixed inset-0 pointer-events-none z-50 w-full h-full"></canvas>
+
+  <!-- 顶部导航与状态栏 -->
+  <header class="w-full max-w-md mx-auto px-4 py-4 flex items-center justify-between">
+    <div class="flex items-center space-x-2">
+      <div class="w-9 h-9 rounded-xl bg-gradient-to-tr from-indigo-500 to-emerald-400 flex items-center justify-center shadow-lg shadow-indigo-500/30">
+        <span class="text-xl">🎙️</span>
+      </div>
+      <div>
+        <h1 class="text-lg font-bold tracking-tight bg-gradient-to-r from-white to-slate-300 bg-clip-text text-transparent">语音报数器</h1>
+        <p class="text-xs text-slate-400">大声从 1 报数到 10</p>
+      </div>
+    </div>
+
+    <!-- 成功总数徽章 -->
+    <div class="flex items-center bg-slate-800/90 border border-slate-700/60 rounded-full px-3 py-1.5 shadow-sm">
+      <span class="text-amber-400 mr-1.5 text-sm">🏆</span>
+      <span class="text-xs text-slate-400 font-medium mr-1">成功:</span>
+      <span id="successCounter" class="text-emerald-400 font-extrabold text-sm">0</span>
+      <span class="text-xs text-slate-400 ml-0.5">次</span>
+    </div>
+  </header>
+
+  <!-- 主容器 -->
+  <main class="w-full max-w-md mx-auto px-4 flex-1 flex flex-col items-center justify-center py-2 space-y-6">
+
+    <!-- 核心大圆环显示面板 -->
+    <div class="relative flex items-center justify-center">
+      <!-- 动态呼吸光晕环 -->
+      <div id="micRing" class="absolute w-64 h-64 rounded-full bg-indigo-500/10 border-2 border-indigo-500/30 pulse-ring pointer-events-none transition-all duration-300"></div>
+
+      <!-- 中心数值显示卡片 -->
+      <div class="relative w-56 h-56 rounded-full bg-slate-800/90 border-4 border-slate-700 shadow-2xl flex flex-col items-center justify-center overflow-hidden backdrop-blur-md">
+        <span class="text-xs tracking-widest text-slate-400 uppercase font-semibold mb-1">当前报数</span>
+        <div id="numberDisplay" class="text-7xl font-black bg-gradient-to-b from-white via-indigo-100 to-indigo-400 bg-clip-text text-transparent transition-all duration-200">
+          0
+        </div>
+        <div class="mt-2 text-xs font-medium text-slate-400 flex items-center gap-1">
+          <span>下一个目标:</span>
+          <span id="targetDisplay" class="text-indigo-400 font-bold text-sm">1</span>
+        </div>
+
+        <!-- 底部微型进度填充条 -->
+        <div class="absolute bottom-0 left-0 w-full h-2 bg-slate-700">
+          <div id="progressBar" class="h-full bg-gradient-to-r from-indigo-500 to-emerald-400 transition-all duration-300 w-0"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 1 到 10 步骤步进卡槽 -->
+    <div class="w-full bg-slate-800/60 p-3 rounded-2xl border border-slate-700/50 backdrop-blur-sm">
+      <div class="flex justify-between items-center text-xs text-slate-400 mb-2 px-1">
+        <span>报数进度 (1 - 10)</span>
+        <span id="stepRatio" class="font-mono text-indigo-400">0 / 10</span>
+      </div>
+      <div id="stepDots" class="grid grid-cols-10 gap-1.5">
+        <!-- 由 JavaScript 动态渲染 1 到 10 的指示圆点 -->
+      </div>
+    </div>
+
+    <!-- 实时收音状态与识别反馈框 -->
+    <div class="w-full bg-slate-800/40 rounded-2xl p-3 border border-slate-700/40 flex flex-col items-center text-center space-y-2">
+      <!-- 伪动态声波柱 -->
+      <div id="waveContainer" class="flex items-center gap-1 h-6">
+        <span class="wave-bar w-1 bg-indigo-500/70 rounded-full h-2"></span>
+        <span class="wave-bar w-1 bg-indigo-400/90 rounded-full h-3"></span>
+        <span class="wave-bar w-1 bg-emerald-400 rounded-full h-4"></span>
+        <span class="wave-bar w-1 bg-indigo-400/90 rounded-full h-3"></span>
+        <span class="wave-bar w-1 bg-indigo-500/70 rounded-full h-2"></span>
+      </div>
+
+      <div class="text-xs text-slate-400 flex items-center gap-1.5">
+        <span id="statusIndicator" class="inline-block w-2 h-2 rounded-full bg-amber-400 animate-pulse"></span>
+        <span id="statusText">正在准备语音识别...</span>
+      </div>
+
+      <!-- 实时听到的文字日志 -->
+      <div class="w-full bg-slate-900/80 rounded-xl px-3 py-2 border border-slate-800 text-left">
+        <div class="text-[10px] text-slate-500 uppercase tracking-wider">最近听到的语音:</div>
+        <div id="speechTranscript" class="text-xs text-slate-300 font-mono truncate mt-0.5 min-h-[18px]">
+          等待点击开始...
+        </div>
+      </div>
+    </div>
+
+    <!-- 控制按钮区域 -->
+    <div class="w-full flex items-center gap-3">
+      <!-- 麦克风开始/暂停切换按钮 -->
+      <button id="toggleMicBtn" class="flex-1 py-3.5 px-5 rounded-xl font-bold text-sm flex items-center justify-center gap-2 bg-gradient-to-r from-indigo-600 to-indigo-500 hover:from-indigo-500 hover:to-indigo-400 text-white shadow-lg shadow-indigo-600/30 active:scale-95 transition-all">
+        <span id="btnIcon">🎙️</span>
+        <span id="btnText">启动语音识别</span>
+      </button>
+
+      <!-- 静音/音效切换 -->
+      <button id="toggleSoundBtn" title="切换提示音效" class="p-3.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 active:scale-95 transition-all">
+        <span id="soundIcon">🔊</span>
+      </button>
+
+      <!-- 重置当前轮次 -->
+      <button id="resetRoundBtn" title="重置本轮计数" class="p-3.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 active:scale-95 transition-all">
+        ↺
+      </button>
+    </div>
+
+    <!-- 兜底备用：手动点击模拟按钮 -->
+    <div class="w-full pt-1 text-center">
+      <button id="manualStepBtn" class="text-xs text-slate-500 hover:text-indigo-400 underline underline-offset-4 transition-colors">
+        手机麦克风无法使用？点这里手动测试模拟报数 +1
+      </button>
+    </div>
+
+  </main>
+
+  <!-- 成功欢呼弹窗模态框 -->
+  <div id="celebrationModal" class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-sm opacity-0 pointer-events-none transition-all duration-300">
+    <div class="bg-gradient-to-b from-slate-800 to-slate-900 border border-emerald-500/40 p-6 rounded-3xl max-w-xs w-full text-center shadow-2xl shadow-emerald-500/20 transform scale-90 transition-all duration-300" id="modalCard">
+      <div class="w-16 h-16 rounded-full bg-emerald-500/20 text-emerald-400 mx-auto flex items-center justify-center text-3xl mb-3 shadow-inner">
+        🎉
+      </div>
+      <h3 class="text-2xl font-black text-white tracking-tight">成功一次！</h3>
+      <p class="text-slate-300 text-sm mt-1">恭喜你完整报数到 10！</p>
+      
+      <div class="my-4 py-3 px-4 bg-slate-800/80 rounded-2xl border border-slate-700/60 flex items-center justify-around">
+        <div>
+          <div class="text-[11px] text-slate-400">已累计完成</div>
+          <div id="modalSuccessCount" class="text-2xl font-black text-emerald-400">1</div>
+        </div>
+        <div class="h-8 w-px bg-slate-700"></div>
+        <div>
+          <div class="text-[11px] text-slate-400">用时评价</div>
+          <div class="text-sm font-bold text-amber-300">干得漂亮 ⭐</div>
+        </div>
+      </div>
+
+      <button id="modalContinueBtn" class="w-full py-3 bg-gradient-to-r from-emerald-500 to-teal-400 text-slate-950 font-bold rounded-xl shadow-lg shadow-emerald-500/30 active:scale-95 transition-all">
+        开始下一轮 (3s 自动)
+      </button>
+    </div>
+  </div>
+
+  <!-- 底部页脚与说明 -->
+  <footer class="w-full max-w-md mx-auto px-4 py-3 text-center text-[11px] text-slate-500">
+    提示：手机端推荐在 Chrome 或 Safari 中使用，请允许麦克风权限
+  </footer>
+
+  <script>
+    // === 1. Web Audio API 音频合成器（不依赖任何外部音频文件） ===
+    class SoundEffects {
+      constructor() {
+        this.ctx = null;
+        this.soundEnabled = true;
+      }
+
+      initCtx() {
+        if (!this.ctx) {
+          const AudioContext = window.AudioContext || window.webkitAudioContext;
+          if (AudioContext) {
+            this.ctx = new AudioContext();
+          }
+        }
+        if (this.ctx && this.ctx.state === 'suspended') {
+          this.ctx.resume();
+        }
+      }
+
+      // 普通报数成功提示音（清脆音符）
+      playStepNote(number) {
+        if (!this.soundEnabled) return;
+        this.initCtx();
+        if (!this.ctx) return;
+
+        // 根据 1~10 音阶递增
+        const baseFreq = 300;
+        const freq = baseFreq + (number * 45);
+
+        const osc = this.ctx.createOscillator();
+        const gain = this.ctx.createGain();
+
+        osc.type = 'sine';
+        osc.frequency.setValueAtTime(freq, this.ctx.currentTime);
+
+        gain.gain.setValueAtTime(0.2, this.ctx.currentTime);
+        gain.gain.exponentialRampToValueAtTime(0.001, this.ctx.currentTime + 0.25);
+
+        osc.connect(gain);
+        gain.connect(this.ctx.destination);
+
+        osc.start();
+        osc.stop(this.ctx.currentTime + 0.25);
+      }
+
+      // 报到 10 的庆祝号角及欢呼和弦
+      playFanfare() {
+        if (!this.soundEnabled) return;
+        this.initCtx();
+        if (!this.ctx) return;
+
+        // 胜利号角琶音序列: C5, E5, G5, C6 (523Hz, 659Hz, 783Hz, 1046Hz)
+        const notes = [523.25, 659.25, 783.99, 1046.50];
+        const now = this.ctx.currentTime;
+
+        notes.forEach((freq, index) => {
+          const osc = this.ctx.createOscillator();
+          const gain = this.ctx.createGain();
+
+          osc.type = 'triangle';
+          osc.frequency.setValueAtTime(freq, now + index * 0.12);
+
+          // 最后一个音符拉长
+          const duration = (index === notes.length - 1) ? 1.0 : 0.2;
+          const startTime = now + index * 0.12;
+
+          gain.gain.setValueAtTime(0, startTime);
+          gain.gain.linearRampToValueAtTime(0.3, startTime + 0.04);
+          gain.gain.exponentialRampToValueAtTime(0.0001, startTime + duration);
+
+          osc.connect(gain);
+          gain.connect(this.ctx.destination);
+
+          osc.start(startTime);
+          osc.stop(startTime + duration);
+        });
+
+        // 模拟欢呼掌声/欢腾白噪声
+        this.playCrowdCheer(now + 0.2);
+      }
+
+      // 拟真欢呼呼啸效果
+      playCrowdCheer(startTime) {
+        if (!this.ctx) return;
+        const bufferSize = this.ctx.sampleRate * 1.5;
+        const buffer = this.ctx.createBuffer(1, bufferSize, this.ctx.sampleRate);
+        const output = buffer.getChannelData(0);
+
+        for (let i = 0; i < bufferSize; i++) {
+          output[i] = Math.random() * 2 - 1; // 白噪声
+        }
+
+        const whiteNoise = this.ctx.createBufferSource();
+        whiteNoise.buffer = buffer;
+
+        const filter = this.ctx.createBiquadFilter();
+        filter.type = 'bandpass';
+        filter.frequency.setValueAtTime(800, startTime);
+        filter.frequency.linearRampToValueAtTime(1400, startTime + 1.2);
+        filter.Q.setValueAtTime(1.5, startTime);
+
+        const gain = this.ctx.createGain();
+        gain.gain.setValueAtTime(0.01, startTime);
+        gain.gain.linearRampToValueAtTime(0.2, startTime + 0.3);
+        gain.gain.exponentialRampToValueAtTime(0.001, startTime + 1.5);
+
+        whiteNoise.connect(filter);
+        filter.connect(gain);
+        gain.connect(this.ctx.destination);
+
+        whiteNoise.start(startTime);
+        whiteNoise.stop(startTime + 1.5);
+      }
+    }
+
+    const soundManager = new SoundEffects();
+
+    // === 2. 五彩纸屑 Confetti 撒花粒子系统 ===
+    class ConfettiEffect {
+      constructor(canvasId) {
+        this.canvas = document.getElementById(canvasId);
+        this.ctx = this.canvas.getContext('2d');
+        this.particles = [];
+        this.animationId = null;
+        this.resize();
+        window.addEventListener('resize', () => this.resize());
+      }
+
+      resize() {
+        this.canvas.width = window.innerWidth;
+        this.canvas.height = window.innerHeight;
+      }
+
+      fire() {
+        this.particles = [];
+        const count = 120;
+        const colors = ['#6366f1', '#10b981', '#f59e0b', '#ec4899', '#38bdf8', '#fbbf24'];
+
+        for (let i = 0; i < count; i++) {
+          this.particles.push({
+            x: this.canvas.width / 2 + (Math.random() - 0.5) * 50,
+            y: this.canvas.height * 0.45,
+            w: Math.random() * 9 + 4,
+            h: Math.random() * 7 + 4,
+            color: colors[Math.floor(Math.random() * colors.length)],
+            vx: (Math.random() - 0.5) * 16,
+            vy: -(Math.random() * 12 + 6),
+            gravity: 0.28,
+            rotation: Math.random() * 360,
+            rotationSpeed: (Math.random() - 0.5) * 12,
+            opacity: 1
+          });
+        }
+
+        if (!this.animationId) {
+          this.animate();
+        }
+      }
+
+      animate() {
+        this.ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
+        let activeCount = 0;
+
+        for (let p of this.particles) {
+          p.x += p.vx;
+          p.vy += p.gravity;
+          p.y += p.vy;
+          p.rotation += p.rotationSpeed;
+          p.opacity -= 0.007;
+
+          if (p.opacity > 0 && p.y < this.canvas.height + 50) {
+            activeCount++;
+            this.ctx.save();
+            this.ctx.translate(p.x, p.y);
+            this.ctx.rotate((p.rotation * Math.PI) / 180);
+            this.ctx.globalAlpha = Math.max(0, p.opacity);
+            this.ctx.fillStyle = p.color;
+            this.ctx.fillRect(-p.w / 2, -p.h / 2, p.w, p.h);
+            this.ctx.restore();
+          }
+        }
+
+        if (activeCount > 0) {
+          this.animationId = requestAnimationFrame(() => this.animate());
+        } else {
+          this.ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
+          this.animationId = null;
+        }
+      }
+    }
+
+    const confetti = new ConfettiEffect('confettiCanvas');
+
+    // === 3. 中文数字匹配映射与识别引擎 ===
+    const CHINESE_NUMBER_MAP = {
+      '一': 1, '幺': 1, '1': 1, '一个': 1,
+      '二': 2, '两': 2, '2': 2, '两个': 2,
+      '三': 3, '3': 3, '三个': 3,
+      '四': 4, '4': 4, '四个': 4,
+      '五': 5, '5': 5, '五个': 5,
+      '六': 6, '6': 6, '六个': 6,
+      '七': 7, '7': 7, '七个': 7,
+      '八': 8, '8': 8, '八个': 8,
+      '九': 9, '9': 9, '九个': 9,
+      '十': 10, '10': 10, '十个': 10
+    };
+
+    // 从识别文本中解析出用户报出的数字列表
+    function extractNumbersFromText(text) {
+      const detected = [];
+      // 遍历数字 1 到 10 各种可能的中文或阿拉伯字符
+      const patterns = [
+        { num: 10, regex: /10|十/g },
+        { num: 1, regex: /1|一|幺/g },
+        { num: 2, regex: /2|二|两/g },
+        { num: 3, regex: /3|三/g },
+        { num: 4, regex: /4|四/g },
+        { num: 5, regex: /5|五/g },
+        { num: 6, regex: /6|六/g },
+        { num: 7, regex: /7|七/g },
+        { num: 8, regex: /8|八/g },
+        { num: 9, regex: /9|九/g }
+      ];
+
+      // 提取所有匹配的项及它们在句子中的位置以保证顺序
+      const matches = [];
+      patterns.forEach(({ num, regex }) => {
+        let match;
+        while ((match = regex.exec(text)) !== null) {
+          matches.push({ num, index: match.index });
+        }
+      });
+
+      // 按照文本出现的先后顺序排序
+      matches.sort((a, b) => a.index - b.index);
+      return matches.map(m => m.num);
+    }
+
+    // === 4. 应用主状态机 ===
+    const state = {
+      currentCount: 0,
+      targetCount: 1,
+      totalSuccess: 0,
+      isListening: false,
+      autoRestartTimer: null,
+      celebrating: false
+    };
+
+    // DOM 元素引用
+    const numberDisplay = document.getElementById('numberDisplay');
+    const targetDisplay = document.getElementById('targetDisplay');
+    const progressBar = document.getElementById('progressBar');
+    const stepRatio = document.getElementById('stepRatio');
+    const stepDotsContainer = document.getElementById('stepDots');
+    const successCounter = document.getElementById('successCounter');
+    const speechTranscript = document.getElementById('speechTranscript');
+    const statusText = document.getElementById('statusText');
+    const statusIndicator = document.getElementById('statusIndicator');
+    const toggleMicBtn = document.getElementById('toggleMicBtn');
+    const btnText = document.getElementById('btnText');
+    const btnIcon = document.getElementById('btnIcon');
+    const toggleSoundBtn = document.getElementById('toggleSoundBtn');
+    const soundIcon = document.getElementById('soundIcon');
+    const resetRoundBtn = document.getElementById('resetRoundBtn');
+    const manualStepBtn = document.getElementById('manualStepBtn');
+    const micRing = document.getElementById('micRing');
+    const waveBars = document.querySelectorAll('.wave-bar');
+    const celebrationModal = document.getElementById('celebrationModal');
+    const modalCard = document.getElementById('modalCard');
+    const modalSuccessCount = document.getElementById('modalSuccessCount');
+    const modalContinueBtn = document.getElementById('modalContinueBtn');
+
+    // 生成 1~10 步骤格子
+    function initStepDots() {
+      stepDotsContainer.innerHTML = '';
+      for (let i = 1; i <= 10; i++) {
+        const dot = document.createElement('div');
+        dot.id = `step-dot-${i}`;
+        dot.className = 'h-7 rounded-lg flex items-center justify-center text-[11px] font-bold transition-all duration-300 bg-slate-700/60 text-slate-400 border border-slate-600/40';
+        dot.innerText = i;
+        stepDotsContainer.appendChild(dot);
+      }
+    }
+    initStepDots();
+
+    // 更新 UI 视图
+    function updateUI() {
+      numberDisplay.innerText = state.currentCount;
+      targetDisplay.innerText = state.currentCount === 10 ? '已完成' : (state.currentCount + 1);
+      stepRatio.innerText = `${state.currentCount} / 10`;
+
+      // 进度条百分比
+      const percentage = (state.currentCount / 10) * 100;
+      progressBar.style.width = `${percentage}%`;
+
+      // 步进小方块高亮
+      for (let i = 1; i <= 10; i++) {
+        const dot = document.getElementById(`step-dot-${i}`);
+        if (dot) {
+          if (i <= state.currentCount) {
+            dot.className = 'h-7 rounded-lg flex items-center justify-center text-[11px] font-bold transition-all duration-300 bg-gradient-to-t from-emerald-600 to-emerald-400 text-white shadow-md shadow-emerald-500/20 border-transparent scale-105';
+          } else if (i === state.currentCount + 1) {
+            dot.className = 'h-7 rounded-lg flex items-center justify-center text-[11px] font-bold transition-all duration-300 bg-indigo-600/80 text-white border border-indigo-400/80 animate-pulse';
+          } else {
+            dot.className = 'h-7 rounded-lg flex items-center justify-center text-[11px] font-bold transition-all duration-300 bg-slate-800 text-slate-500 border border-slate-700/50';
+          }
+        }
+      }
+
+      successCounter.innerText = state.totalSuccess;
+    }
+
+    // 核心报数推进逻辑
+    function advanceNumber(num) {
+      if (state.celebrating) return;
+
+      const expected = state.currentCount + 1;
+
+      // 规则：用户报的数必须等于下一个预期的数
+      if (num === expected) {
+        state.currentCount = num;
+        soundManager.playStepNote(num);
+
+        // 数字放大动画特效
+        numberDisplay.classList.remove('bounce-pop');
+        void numberDisplay.offsetWidth; // 触发 reflow
+        numberDisplay.classList.add('bounce-pop');
+
+        updateUI();
+
+        // 当报到 10 的时候触发欢庆！
+        if (state.currentCount === 10) {
+          triggerCelebration();
+        }
+      }
+    }
+
+    // 触发成功欢庆
+    function triggerCelebration() {
+      state.celebrating = true;
+      state.totalSuccess += 1;
+      updateUI();
+
+      // 1. 播放 Web Audio 欢呼号角
+      soundManager.playFanfare();
+
+      // 2. 喷射 Canvas 彩带
+      confetti.fire();
+
+      // 3. 打开祝贺弹窗
+      modalSuccessCount.innerText = state.totalSuccess;
+      celebrationModal.classList.remove('opacity-0', 'pointer-events-none');
+      modalCard.classList.remove('scale-90');
+      modalCard.classList.add('scale-100');
+
+      // 3秒后自动准备开始下一轮
+      let countdown = 3;
+      modalContinueBtn.innerText = `开始下一轮 (${countdown}s)`;
+      const timer = setInterval(() => {
+        countdown--;
+        if (countdown > 0) {
+          modalContinueBtn.innerText = `开始下一轮 (${countdown}s)`;
+        } else {
+          clearInterval(timer);
+          closeCelebrationModal();
+        }
+      }, 1000);
+
+      modalContinueBtn.onclick = () => {
+        clearInterval(timer);
+        closeCelebrationModal();
+      };
+    }
+
+    // 关闭弹窗并重置为新的一轮
+    function closeCelebrationModal() {
+      celebrationModal.classList.add('opacity-0', 'pointer-events-none');
+      modalCard.classList.remove('scale-100');
+      modalCard.classList.add('scale-90');
+
+      state.currentCount = 0;
+      state.celebrating = false;
+      updateUI();
+    }
+
+    // === 5. 语音识别驱动 (SpeechRecognition) ===
+    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+    let recognizer = null;
+
+    function initSpeechEngine() {
+      if (!SpeechRecognition) {
+        statusIndicator.className = 'inline-block w-2 h-2 rounded-full bg-rose-500';
+        statusText.innerText = '此浏览器不支持语音识别，请用 Chrome/Safari';
+        btnText.innerText = '暂不支持语音';
+        toggleMicBtn.disabled = true;
+        toggleMicBtn.classList.add('opacity-50', 'cursor-not-allowed');
+        return false;
+      }
+
+      recognizer = new SpeechRecognition();
+      recognizer.lang = 'zh-CN'; // 指定为简体中文
+      recognizer.continuous = true; // 连续识别
+      recognizer.interimResults = true; // 获取即时结果提升响应速度
+
+      recognizer.onstart = () => {
+        state.isListening = true;
+        statusIndicator.className = 'inline-block w-2 h-2 rounded-full bg-emerald-400 animate-ping';
+        statusText.innerText = '正在倾听，请按顺序报数 1 ~ 10';
+        btnText.innerText = '暂停语音识别';
+        btnIcon.innerText = '⏸️';
+        toggleMicBtn.classList.replace('from-indigo-600', 'from-rose-600');
+        toggleMicBtn.classList.replace('to-indigo-500', 'to-rose-500');
+        micRing.style.opacity = '1';
+        startVisualizerPulse();
+      };
+
+      recognizer.onresult = (event) => {
+        let transcript = '';
+        for (let i = event.resultIndex; i < event.results.length; ++i) {
+          transcript += event.results[i][0].transcript;
+        }
+
+        if (transcript.trim()) {
+          speechTranscript.innerText = `"${transcript}"`;
+          
+          // 从当前句中提取所有被读出的数字
+          const numbers = extractNumbersFromText(transcript);
+          numbers.forEach(num => {
+            advanceNumber(num);
+          });
+        }
+      };
+
+      recognizer.onerror = (event) => {
+        console.warn('Speech error:', event.error);
+        if (event.error === 'not-allowed') {
+          statusIndicator.className = 'inline-block w-2 h-2 rounded-full bg-rose-500';
+          statusText.innerText = '麦克风权限被拒绝，请在浏览器中允许权限';
+          stopListening();
+        } else if (event.error === 'no-speech') {
+          // 静音是正常现象
+        }
+      };
+
+      // 移动端机制：语音识别会自动休眠断开，若未手动点击暂停则自动续订重启
+      recognizer.onend = () => {
+        if (state.isListening) {
+          clearTimeout(state.autoRestartTimer);
+          state.autoRestartTimer = setTimeout(() => {
+            if (state.isListening) {
+              try {
+                recognizer.start();
+              } catch (e) {
+                console.log('Restart ignored:', e);
+              }
+            }
+          }, 300);
+        } else {
+          stopVisualizerPulse();
+          statusIndicator.className = 'inline-block w-2 h-2 rounded-full bg-slate-500';
+          statusText.innerText = '语音已暂停，点击按钮启动';
+          btnText.innerText = '启动语音识别';
+          btnIcon.innerText = '🎙️';
+          toggleMicBtn.classList.replace('from-rose-600', 'from-indigo-600');
+          toggleMicBtn.classList.replace('to-rose-500', 'to-indigo-500');
+          micRing.style.opacity = '0';
+        }
+      };
+
+      return true;
+    }
+
+    function startListening() {
+      soundManager.initCtx(); // 唤醒 iOS Web Audio
+      if (!recognizer && !initSpeechEngine()) return;
+      try {
+        state.isListening = true;
+        recognizer.start();
+      } catch (err) {
+        console.log('Already started or error:', err);
+      }
+    }
+
+    function stopListening() {
+      state.isListening = false;
+      clearTimeout(state.autoRestartTimer);
+      if (recognizer) {
+        try {
+          recognizer.stop();
+        } catch (err) {}
+      }
+    }
+
+    // 随机动态声波动画
+    let visualizerTimer = null;
+    function startVisualizerPulse() {
+      if (visualizerTimer) clearInterval(visualizerTimer);
+      visualizerTimer = setInterval(() => {
+        waveBars.forEach(bar => {
+          const h = Math.floor(Math.random() * 18) + 6;
+          bar.style.height = `${h}px`;
+        });
+      }, 150);
+    }
+
+    function stopVisualizerPulse() {
+      if (visualizerTimer) clearInterval(visualizerTimer);
+      waveBars.forEach((bar, index) => {
+        bar.style.height = `${(index === 2 ? 14 : 8)}px`;
+      });
+    }
+
+    // === 6. 事件绑定 ===
+    // 麦克风启停
+    toggleMicBtn.addEventListener('click', () => {
+      if (state.isListening) {
+        stopListening();
+      } else {
+        startListening();
+      }
+    });
+
+    // 音效开关
+    toggleSoundBtn.addEventListener('click', () => {
+      soundManager.soundEnabled = !soundManager.soundEnabled;
+      soundIcon.innerText = soundManager.soundEnabled ? '🔊' : '🔇';
+      toggleSoundBtn.classList.toggle('text-rose-400', !soundManager.soundEnabled);
+    });
+
+    // 重置本轮
+    resetRoundBtn.addEventListener('click', () => {
+      state.currentCount = 0;
+      updateUI();
+      speechTranscript.innerText = '已重置本轮，请从 1 重新开始报数';
+    });
+
+    // 手动测试辅助按钮
+    manualStepBtn.addEventListener('click', () => {
+      const next = state.currentCount + 1;
+      if (next <= 10) {
+        speechTranscript.innerText = `[模拟按键报数]: ${next}`;
+        advanceNumber(next);
+      }
+    });
+
+    // 初始化界面状态
+    updateUI();
+    initSpeechEngine();
+  </script>
+</body>
+</html>
